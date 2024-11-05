@@ -1,0 +1,9 @@
+# Ignore environment file
+.env
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
+
+# Ignore build and dependency files
+vendor/
