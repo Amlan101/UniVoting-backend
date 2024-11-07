@@ -1,4 +1,3 @@
-// main.go
 package main
 
 import (
@@ -7,8 +6,11 @@ import (
 	"os"
 	"time"
 	"net/http"
+    "crypto/rand"
+    "encoding/base64"
 	"golang.org/x/crypto/bcrypt"
 	"github.com/golang-jwt/jwt/v4"
+    "golang.org/x/crypto/nacl/secretbox"
 	"univoting-backend/models"
 
 	"github.com/gin-gonic/gin"
@@ -22,6 +24,9 @@ var db *gorm.DB
 // Secret key used for signing JWTs 
 var jwtSecret []byte
 
+// Replace this with a secure 32-byte key (e.g., from environment variable)
+var encryptionKey [32]byte
+
 func init() {
     // Load .env file
     err := godotenv.Load(".env")
@@ -34,6 +39,15 @@ func init() {
     if len(jwtSecret) == 0 {
         log.Fatalf("JWT secret key not set in .env file")
     }
+
+     // Load encryption key from environment variable
+    key := os.Getenv("ENCRYPTION_KEY")
+    if len(key) < 32 {
+        log.Fatalf("Encryption key must be 32 bytes")
+    }
+
+    // Copy the key into the encryptionKey array
+    copy(encryptionKey[:], []byte(key))
 }
 
 // Connects to PostgreSQL using GORM
@@ -62,7 +76,7 @@ func connectDatabase() {
 	log.Println("Database connected successfully")
 
 	// Run migrations for Voter model
-	db.AutoMigrate(&models.Voter{})
+	db.AutoMigrate(&models.Voter{}, &models.Vote{})
 	log.Println("Database migrated successfully")
 }
 
@@ -143,6 +157,78 @@ func loginVoter(c *gin.Context) {
     c.JSON(http.StatusOK, gin.H{"token": tokenString})
 }
 
+// CastVoteHandler handles vote casting requests
+func castVote(c *gin.Context) {
+    // Get the voter ID from JWT token
+    token := c.Request.Header.Get("Authorization")
+    voterID, err := validateTokenAndGetVoterID(token)
+    if(err != nil){
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+        return
+    }
+
+    // Check if the voter has already voted
+    var voter models.Voter
+    if err := db.First(&voter, voterID).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Voter not found"})
+        return
+    }
+
+    if voter.HasVoted {
+        c.JSON(http.StatusForbidden, gin.H{"error": "Voter has already voted"})
+        return
+    }
+
+    // Bind and validate vote data from request body
+    var input struct {
+        VoteData string `json:"vote_data" binding:"required"`
+    }
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
+
+     // Encrypt the vote data
+     var nonce [24]byte
+     if _, err := rand.Read(nonce[:]); err != nil {
+         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate nonce"})
+         return
+     }
+     encryptedVote := secretbox.Seal(nonce[:], []byte(input.VoteData), &nonce, &encryptionKey)
+     encryptedVoteString := base64.StdEncoding.EncodeToString(encryptedVote)
+ 
+     // Create and save the vote
+     vote := models.Vote{
+         VoterID:      voter.ID,
+         EncryptedVote: encryptedVoteString,
+     }
+     if err := db.Create(&vote).Error; err != nil {
+         c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record vote"})
+         return
+     }
+
+    // Mark voter as having voted
+    voter.HasVoted = true
+    db.Save(&voter)
+
+    c.JSON(http.StatusOK, gin.H{"message": "Vote cast successfully"})
+}
+
+// Helper function to validate JWT token and get voter ID
+func validateTokenAndGetVoterID(tokenString string) (uint, error) {
+    // Parse and validate JWT token
+    token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+        return jwtSecret, nil
+    })
+
+    if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
+        voterID := uint(claims["voter_id"].(float64))
+        return voterID, nil
+    }
+    return 0, err
+}
+
+
 func main() {
 	router := gin.Default()
 
@@ -152,6 +238,7 @@ func main() {
 	// Routes
 	router.POST("/register", registerVoter)
 	router.POST("/login", loginVoter)
+    router.POST("/vote", castVote)
 
 	// Define a basic route to test the server
 	router.GET("/", func(c *gin.Context) {

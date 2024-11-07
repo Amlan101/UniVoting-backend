@@ -8,4 +8,5 @@ type Voter struct {
     Name       string    `json:"name"`
     Email      string    `json:"email" gorm:"unique"`
     Password   string    `json:"-"`
+    HasVoted   bool      `json:"has_voted"`
 }
