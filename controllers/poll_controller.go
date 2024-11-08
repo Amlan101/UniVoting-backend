@@ -1,11 +1,14 @@
 package controllers
 
 import (
+	"encoding/base64"
+	"net/http"
 	"univoting-backend/config"
 	"univoting-backend/models"
-	"net/http"
 
+	"github.com/codahale/sss"
 	"github.com/gin-gonic/gin"
+	"golang.org/x/crypto/nacl/secretbox"
 )
 
 // CreatePoll handles poll creation by an admin
@@ -179,4 +182,58 @@ func GetPollResults(c *gin.Context) {
             "options":  poll.Options,
         },
     })
+}
+
+// TallyVotes reconstructs and tallies votes for a specific poll
+func TallyVotes(c *gin.Context) {
+    pollID := c.Param("poll_id")
+    var poll models.Poll
+
+    // Check if poll exists
+    if err := config.DB.Preload("Options").First(&poll, pollID).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Poll not found"})
+        return
+    }
+
+    // Retrieve all vote shares for the poll
+    var voteShares []models.VoteShare
+    config.DB.Where("poll_id = ?", pollID).Find(&voteShares)
+
+    // Group shares by voter
+    sharesByVoter := map[uint][][]byte{}
+    for _, share := range voteShares {
+        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
+        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+    }
+
+    // Reconstruct votes
+    voteCounts := map[uint]int{} // OptionID -> Vote Count
+    for _, shares := range sharesByVoter {
+        if len(shares) >= 3 { // Only reconstruct if we have the threshold number of shares
+            shareMap := make(map[byte][]byte)
+            for i, share := range shares {
+                shareMap[byte(i)] = share
+            }
+
+            encryptedVote := sss.Combine(shareMap)
+            if encryptedVote == nil {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reconstruct vote"})
+                return
+            }
+
+            // Decrypt the reconstructed vote
+            var nonce [24]byte
+            copy(nonce[:], encryptedVote[:24])
+            decrypted, ok := secretbox.Open(nil, encryptedVote[24:], &nonce, &config.EncryptionKey)
+            if !ok {
+                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt vote"})
+                return
+            }
+
+            optionID := uint(decrypted[0]) // Assuming the option ID is stored as a single byte
+            voteCounts[optionID]++
+        }
+    }
+
+    c.JSON(http.StatusOK, gin.H{"results": voteCounts})
 }

@@ -13,7 +13,7 @@ func main() {
 	config.ConnectDatabase()
 
 	// Migrate models
-	config.DB.AutoMigrate(&models.Voter{}, &models.Vote{}, &models.Poll{}, &models.Option{})
+	config.DB.AutoMigrate(&models.Voter{}, &models.Vote{}, &models.Poll{}, &models.Option{},  &models.VoteShare{})
 
 	// Start the router
 	router := routes.SetupRouter()

@@ -23,7 +23,8 @@ func SetupRouter() *gin.Engine {
     votingRoutes.POST("/polls", controllers.CreatePoll)
     votingRoutes.PUT("/polls/:poll_id/deactivate", controllers.DeactivatePoll) 
     votingRoutes.DELETE("/polls/:poll_id", controllers.DeletePoll)              
-	votingRoutes.GET("/polls/:poll_id/results", controllers.GetPollResults) 
+	votingRoutes.GET("/polls/:poll_id/results", controllers.GetPollResults)
+	votingRoutes.GET("/polls/:poll_id/tally", controllers.TallyVotes)
 
     return router
 }

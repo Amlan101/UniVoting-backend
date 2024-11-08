@@ -6,62 +6,61 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"net/http"
-
+	"github.com/codahale/sss"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/nacl/secretbox"
 )
 
 // CastVote handles the casting of votes for a specific poll option
 func CastVote(c *gin.Context) {
-	// Get the voter ID from the context (set by JWT middleware)
-	voterID, exists := c.Get("voter_id")
-	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
-		return
-	}
+    voterID, exists := c.Get("voter_id")
+    if !exists {
+        c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
+        return
+    }
 
-	// Check if the voter has already voted
-	var voter models.Voter
-	if err := config.DB.First(&voter, voterID).Error; err != nil {
-		c.JSON(http.StatusNotFound, gin.H{"error": "Voter not found"})
-		return
-	}
-	if voter.HasVoted {
-		c.JSON(http.StatusForbidden, gin.H{"error": "Voter has already voted"})
-		return
-	}
+    var input struct {
+        OptionID uint `json:"option_id" binding:"required"`
+    }
+    if err := c.ShouldBindJSON(&input); err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+        return
+    }
 
-	// Bind and validate vote data from request body
-	var input struct {
-		OptionID uint `json:"option_id" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&input); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-		return
-	}
+    var nonce [24]byte
+    if _, err := rand.Read(nonce[:]); err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate nonce"})
+        return
+    }
 
-	// Encrypt the vote data (OptionID)
-	var nonce [24]byte
-	if _, err := rand.Read(nonce[:]); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to generate nonce"})
-		return
-	}
-	encryptedVote := secretbox.Seal(nonce[:], []byte(string(input.OptionID)), &nonce, &config.EncryptionKey)
-	encryptedVoteString := base64.StdEncoding.EncodeToString(encryptedVote)
+    // Encrypt the vote data (OptionID)
+    encryptedVote := secretbox.Seal(nonce[:], []byte(string(input.OptionID)), &nonce, &config.EncryptionKey)
 
-	// Create and save the vote
-	vote := models.Vote{
-		VoterID:      voter.ID,
-		EncryptedVote: encryptedVoteString,
-	}
-	if err := config.DB.Create(&vote).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to record vote"})
-		return
-	}
+    // Split the encrypted vote into shares using Shamir's Secret Sharing
+    shares, err := sss.Split(3, 5, encryptedVote) // Example: threshold of 3, total of 5 shares
+    if err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to split encrypted vote"})
+        return
+    }
 
-	// Mark voter as having voted
-	voter.HasVoted = true
-	config.DB.Save(&voter)
+    // Save each share as a separate entry in the database
+    for i, share := range shares {
+        voteShare := models.VoteShare{
+            VoterID: voterID.(uint),
+            ShareIndex: int(i),
+            ShareData: base64.StdEncoding.EncodeToString(share),
+        }
+        if err := config.DB.Create(&voteShare).Error; err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store vote share"})
+            return
+        }
+    }
 
-	c.JSON(http.StatusOK, gin.H{"message": "Vote cast successfully"})
+    // Mark the voter as having voted
+    var voter models.Voter
+    config.DB.First(&voter, voterID)
+    voter.HasVoted = true
+    config.DB.Save(&voter)
+
+    c.JSON(http.StatusOK, gin.H{"message": "Vote cast successfully with secret sharing"})
 }
