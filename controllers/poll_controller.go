@@ -195,13 +195,38 @@ func TallyVotes(c *gin.Context) {
         return
     }
 
-    // Retrieve all vote shares for the poll
-    var voteShares []models.VoteShare
-    config.DB.Where("poll_id = ?", pollID).Find(&voteShares)
+    // Retrieve all vote shares from each table
+    var voteShares1 []models.VoteShare1
+    var voteShares2 []models.VoteShare2
+    var voteShares3 []models.VoteShare3
+    var voteShares4 []models.VoteShare4
+    var voteShares5 []models.VoteShare5
+
+    config.DB.Find(&voteShares1)
+    config.DB.Find(&voteShares2)
+    config.DB.Find(&voteShares3)
+    config.DB.Find(&voteShares4)
+    config.DB.Find(&voteShares5)
 
     // Group shares by voter
     sharesByVoter := map[uint][][]byte{}
-    for _, share := range voteShares {
+    for _, share := range voteShares1 {
+        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
+        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+    }
+    for _, share := range voteShares2 {
+        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
+        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+    }
+    for _, share := range voteShares3 {
+        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
+        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+    }
+    for _, share := range voteShares4 {
+        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
+        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+    }
+    for _, share := range voteShares5 {
         decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
         sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
     }

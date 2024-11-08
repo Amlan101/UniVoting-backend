@@ -34,7 +34,7 @@ func CastVote(c *gin.Context) {
     }
 
     // Encrypt the vote data (OptionID)
-    encryptedVote := secretbox.Seal(nonce[:], []byte(string(input.OptionID)), &nonce, &config.EncryptionKey)
+    encryptedVote := secretbox.Seal(nonce[:], []byte{byte(input.OptionID)}, &nonce, &config.EncryptionKey)
 
     // Split the encrypted vote into shares using Shamir's Secret Sharing
     shares, err := sss.Split(3, 5, encryptedVote) // Example: threshold of 3, total of 5 shares
@@ -43,15 +43,27 @@ func CastVote(c *gin.Context) {
         return
     }
 
-    // Save each share as a separate entry in the database
+    // Distribute shares across tables
     for i, share := range shares {
-        voteShare := models.VoteShare{
-            VoterID: voterID.(uint),
-            ShareIndex: int(i),
-            ShareData: base64.StdEncoding.EncodeToString(share),
-        }
-        if err := config.DB.Create(&voteShare).Error; err != nil {
-            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to store vote share"})
+        shareData := base64.StdEncoding.EncodeToString(share)
+        switch i {
+        case 0:
+            voteShare := models.VoteShare1{VoterID: voterID.(uint), ShareIndex: int(i), ShareData: shareData}
+            config.DB.Create(&voteShare)
+        case 1:
+            voteShare := models.VoteShare2{VoterID: voterID.(uint), ShareIndex: int(i), ShareData: shareData}
+            config.DB.Create(&voteShare)
+        case 2:
+            voteShare := models.VoteShare3{VoterID: voterID.(uint), ShareIndex: int(i), ShareData: shareData}
+            config.DB.Create(&voteShare)
+        case 3:
+            voteShare := models.VoteShare4{VoterID: voterID.(uint), ShareIndex: int(i), ShareData: shareData}
+            config.DB.Create(&voteShare)
+        case 4:
+            voteShare := models.VoteShare5{VoterID: voterID.(uint), ShareIndex: int(i), ShareData: shareData}
+            config.DB.Create(&voteShare)
+                default:
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Unexpected number of shares"})
             return
         }
     }
@@ -64,3 +76,4 @@ func CastVote(c *gin.Context) {
 
     c.JSON(http.StatusOK, gin.H{"message": "Vote cast successfully with secret sharing"})
 }
+
