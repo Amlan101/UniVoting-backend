@@ -10,6 +10,11 @@ func SetupRouter() *gin.Engine {
 	router := gin.Default()
 
     // Auth routes
+    router.GET("/", func(c *gin.Context) {
+        c.JSON(200, gin.H{
+            "message": "Welcome to the Univoting Backend!",
+        })
+    })
     router.POST("/register", controllers.RegisterVoter)
     router.POST("/login", controllers.LoginVoter)
 
