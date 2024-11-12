@@ -2,7 +2,9 @@ package controllers
 
 import (
 	"encoding/base64"
+	"fmt"
 	"net/http"
+	"strconv"
 	"univoting-backend/config"
 	"univoting-backend/models"
 
@@ -202,63 +204,184 @@ func TallyVotes(c *gin.Context) {
     var voteShares4 []models.VoteShare4
     var voteShares5 []models.VoteShare5
 
-    config.DB.Find(&voteShares1)
-    config.DB.Find(&voteShares2)
-    config.DB.Find(&voteShares3)
-    config.DB.Find(&voteShares4)
-    config.DB.Find(&voteShares5)
+    // Add error handling for database queries
+    if err := config.DB.Find(&voteShares1).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve vote shares 1"})
+        return
+    }
+    if err := config.DB.Find(&voteShares2).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve vote shares 2"})
+        return
+    }
+    if err := config.DB.Find(&voteShares3).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve vote shares 3"})
+        return
+    }
+    if err := config.DB.Find(&voteShares4).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve vote shares 4"})
+        return
+    }
+    if err := config.DB.Find(&voteShares5).Error; err != nil {
+        c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to retrieve vote shares 5"})
+        return
+    }
 
     // Group shares by voter
-    sharesByVoter := map[uint][][]byte{}
+    sharesByVoter := make(map[uint]map[byte][]byte)
+    
+    // Helper function to process shares
+    processShare := func(voterID uint, shareIndex int, shareData string) error {
+        decodedShare, err := base64.StdEncoding.DecodeString(shareData)
+        if err != nil || len(decodedShare) == 0 {
+            return fmt.Errorf("invalid or empty share data for voter %d, share index %d", voterID, shareIndex)
+
+        }
+        
+        if sharesByVoter[voterID] == nil {
+            sharesByVoter[voterID] = make(map[byte][]byte)
+        }
+        sharesByVoter[voterID][byte(shareIndex)] = decodedShare
+        return nil
+    }
+
+    // Process shares from each table
     for _, share := range voteShares1 {
-        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
-        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+        if err := processShare(share.VoterID, share.ShareIndex, share.ShareData); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process share 1"})
+            return
+        }
     }
     for _, share := range voteShares2 {
-        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
-        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+        if err := processShare(share.VoterID, share.ShareIndex, share.ShareData); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process share 2"})
+            return
+        }
     }
     for _, share := range voteShares3 {
-        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
-        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+        if err := processShare(share.VoterID, share.ShareIndex, share.ShareData); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process share 3"})
+            return
+        }
     }
     for _, share := range voteShares4 {
-        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
-        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
+        if err := processShare(share.VoterID, share.ShareIndex, share.ShareData); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process share 4"})
+            return
+        }
     }
     for _, share := range voteShares5 {
-        decodedShare, _ := base64.StdEncoding.DecodeString(share.ShareData)
-        sharesByVoter[share.VoterID] = append(sharesByVoter[share.VoterID], decodedShare)
-    }
-
-    // Reconstruct votes
-    voteCounts := map[uint]int{} // OptionID -> Vote Count
-    for _, shares := range sharesByVoter {
-        if len(shares) >= 3 { // Only reconstruct if we have the threshold number of shares
-            shareMap := make(map[byte][]byte)
-            for i, share := range shares {
-                shareMap[byte(i)] = share
-            }
-
-            encryptedVote := sss.Combine(shareMap)
-            if encryptedVote == nil {
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to reconstruct vote"})
-                return
-            }
-
-            // Decrypt the reconstructed vote
-            var nonce [24]byte
-            copy(nonce[:], encryptedVote[:24])
-            decrypted, ok := secretbox.Open(nil, encryptedVote[24:], &nonce, &config.EncryptionKey)
-            if !ok {
-                c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to decrypt vote"})
-                return
-            }
-
-            optionID := uint(decrypted[0]) // Assuming the option ID is stored as a single byte
-            voteCounts[optionID]++
+        if err := processShare(share.VoterID, share.ShareIndex, share.ShareData); err != nil {
+            c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process share 5"})
+            return
         }
     }
 
-    c.JSON(http.StatusOK, gin.H{"results": voteCounts})
+    // Reconstruct votes
+    voteCounts := make(map[uint]int) // OptionID -> Vote Count
+    
+    for voterID, shares := range sharesByVoter {
+        // Check if we have enough shares (threshold is 2)
+        if len(shares) < 2 {
+            continue
+        }
+
+        // Combine shares
+        encryptedVote := sss.Combine(shares)
+        if len(encryptedVote) == 0 || encryptedVote == nil{
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "error": "Failed to reconstruct vote",
+                "voterID": voterID,
+                "shareCount": len(shares),
+            })
+            return
+        }
+
+        // Ensure we have enough data for nonce
+        if len(encryptedVote) <= 24 {
+
+            c.JSON(http.StatusInternalServerError, gin.H{
+
+                "error": "Invalid encrypted vote length",
+
+                "voterID": voterID,
+
+                "actualLength": len(encryptedVote),
+
+            })
+
+            return
+
+        }
+
+        // Decrypt the reconstructed vote
+        var nonce [24]byte
+        copy(nonce[:], encryptedVote[:24])
+        decrypted, ok := secretbox.Open(nil, encryptedVote[24:], &nonce, &config.EncryptionKey)
+        if !ok {
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "error": "Failed to decrypt vote",
+                "voterID": voterID,
+            })
+            return
+        }
+
+        // Ensure we have data to read
+        if len(decrypted) == 0 {
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "error": "Empty decrypted vote",
+                "voterID": voterID,
+            })
+            return
+        }
+
+        optionID := uint(decrypted[0])
+        
+        // Verify that the option belongs to this poll
+        validOption := false
+        for _, option := range poll.Options {
+            if option.ID == optionID {
+                validOption = true
+                break
+            }
+        }
+
+        if !validOption {
+            c.JSON(http.StatusInternalServerError, gin.H{
+                "error": "Invalid option ID in decrypted vote",
+                "voterID": voterID,
+                "optionID": optionID,
+            })
+            return
+        }
+
+        voteCounts[optionID]++
+    }
+
+    // Return results with poll information
+    response := gin.H{
+        "poll_id": poll.ID,
+        "poll_title": poll.Question,
+        "total_votes": len(sharesByVoter),
+        "results": voteCounts,
+    }
+
+    c.JSON(http.StatusOK, response)
+}
+
+// GetPollDetails retrieves details for a specific poll
+func GetPollDetails(c *gin.Context) {
+    pollID, err := strconv.ParseUint(c.Param("poll_id"), 10, 64)
+    if err != nil {
+        c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid poll ID"})
+        return
+    }
+
+    // Fetch the poll from the database
+    var poll models.Poll
+    if err := config.DB.Preload("Options").First(&poll, pollID).Error; err != nil {
+        c.JSON(http.StatusNotFound, gin.H{"error": "Poll not found"})
+        return
+    }
+
+    c.JSON(http.StatusOK, poll)
 }

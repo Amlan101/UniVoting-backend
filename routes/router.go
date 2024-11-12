@@ -9,17 +9,19 @@ import (
 func SetupRouter() *gin.Engine {
 	router := gin.Default()
 
-    // Auth routes
     router.GET("/", func(c *gin.Context) {
         c.JSON(200, gin.H{
             "message": "Welcome to the Univoting Backend!",
         })
     })
+
+    // Auth routes
     router.POST("/register", controllers.RegisterVoter)
     router.POST("/login", controllers.LoginVoter)
 
     // Public route for viewing active polls
     router.GET("/polls", controllers.GetActivePolls)
+    router.GET("/polls/:poll_id", controllers.GetPollDetails)
 
     // Protected routes for voting and poll management
     votingRoutes := router.Group("/")
